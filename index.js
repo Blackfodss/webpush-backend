@@ -7,10 +7,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-/* =======================
-   ENV
-======================= */
-const PORT = process.env.PORT || 10000;
+// ===== ENV =====
+const PORT = process.env.PORT || 3000;
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -18,108 +16,72 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 
-/* =======================
-   SUPABASE CLIENT
-======================= */
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error("Supabase env vars missing");
+}
+
+if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+  throw new Error("VAPID env vars missing");
+}
+
 const supabase = createClient(
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY
 );
 
-/* =======================
-   VAPID
-======================= */
 webpush.setVapidDetails(
   "mailto:admin@bookpairsync.app",
   VAPID_PUBLIC_KEY,
   VAPID_PRIVATE_KEY
 );
 
-/* =======================
-   ROUTES
-======================= */
-
-// health check
-app.get("/", (_, res) => {
-  res.send("Web Push Backend OK");
-});
-
-// salvar subscription
+// ===== SUBSCRIBE =====
 app.post("/subscribe", async (req, res) => {
   try {
-    const { user_id, endpoint, keys } = req.body;
+    const { userId, endpoint, p256dh, auth } = req.body;
 
-    if (!user_id || !endpoint || !keys) {
-      return res.status(400).json({ error: "Dados incompletos" });
+    if (!userId || !endpoint || !p256dh || !auth) {
+      return res.status(400).json({
+        error: "Dados incompletos",
+        received: req.body,
+      });
     }
 
     const { error } = await supabase
       .from("push_subscriptions")
-      .upsert(
-        { user_id, endpoint, keys },
-        { onConflict: "endpoint" }
-      );
+      .upsert({
+        user_id: userId,
+        endpoint,
+        p256dh,
+        auth,
+      }, { onConflict: "endpoint" });
 
     if (error) {
       console.error("Supabase error:", error);
       return res.status(500).json({ error: "Erro ao salvar subscription" });
     }
 
-    res.status(201).json({ success: true });
+    res.json({ success: true });
   } catch (err) {
-    console.error(err);
+    console.error("Subscribe error:", err);
     res.status(500).json({ error: "Erro interno" });
   }
 });
 
-// enviar push PARA UM USUÁRIO ESPECÍFICO
-app.post("/send", async (req, res) => {
-  const { target_user_id, title, body } = req.body;
-
-  if (!target_user_id || !title || !body) {
-    return res.status(400).json({ error: "Dados incompletos" });
-  }
-
-  const { data: subs, error } = await supabase
+// ===== DEBUG =====
+app.get("/debug/subscriptions", async (req, res) => {
+  const { data, error } = await supabase
     .from("push_subscriptions")
-    .select("*")
-    .eq("user_id", target_user_id);
+    .select("*");
 
   if (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Erro ao buscar subscriptions" });
+    return res.status(500).json({ error });
   }
-
-  let sent = 0;
-
-  for (const sub of subs) {
-    try {
-      await webpush.sendNotification(
-        {
-          endpoint: sub.endpoint,
-          keys: sub.keys,
-        },
-        JSON.stringify({ title, body })
-      );
-      sent++;
-    } catch (err) {
-      console.error("Erro ao enviar push:", err);
-    }
-  }
-
-  res.json({ success: true, sent });
-});
-
-// debug
-app.get("/debug/subscriptions", async (_, res) => {
-  const { data } = await supabase
-    .from("push_subscriptions")
-    .select("user_id, endpoint");
 
   const grouped = {};
-  data.forEach((s) => {
-    if (!grouped[s.user_id]) grouped[s.user_id] = [];
-    grouped[s.user_id].push(s.endpoint);
+  data.forEach(sub => {
+    if (!grouped[sub.user_id]) grouped[sub.user_id] = [];
+    grouped[sub.user_id].push(sub.endpoint);
   });
 
   res.json({
@@ -128,10 +90,12 @@ app.get("/debug/subscriptions", async (_, res) => {
   });
 });
 
-/* =======================
-   START
-======================= */
+// ===== HEALTH =====
+app.get("/", (_, res) => {
+  res.send("WebPush Backend OK");
+});
+
 app.listen(PORT, () => {
-  console.log("Backend rodando na porta", PORT);
+  console.log("Server running on port", PORT);
 });
 
