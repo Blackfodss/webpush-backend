@@ -1,6 +1,6 @@
-import express from "express";
-import cors from "cors";
-import webpush from "web-push";
+const express = require("express");
+const cors = require("cors");
+const webpush = require("web-push");
 
 const app = express();
 app.use(cors());
@@ -8,7 +8,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// 🔐 VAPID (vem das Environment Variables do Render)
+// 🔐 VAPID (Render Environment Variables)
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 
@@ -22,12 +22,10 @@ webpush.setVapidDetails(
   VAPID_PRIVATE_KEY
 );
 
-// 🧠 Armazenamento simples em memória (apenas para teste)
+// 🧠 Armazenamento em memória (teste)
 const subscriptions = [];
 
-/**
- * Recebe a PushSubscription crua do frontend (Lovable)
- */
+// Recebe subscription do Lovable
 app.post("/subscribe", (req, res) => {
   const subscription = req.body;
 
@@ -49,9 +47,7 @@ app.post("/subscribe", (req, res) => {
   return res.status(201).json({ success: true });
 });
 
-/**
- * Envia push para todas as subscriptions salvas
- */
+// Envia push
 app.post("/send", async (req, res) => {
   const { title = "Teste", body = "Push funcionando 🚀" } = req.body;
 
