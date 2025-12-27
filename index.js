@@ -9,82 +9,75 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // ===== VAPID =====
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
-
 webpush.setVapidDetails(
   "mailto:admin@bookpairsync.app",
-  VAPID_PUBLIC_KEY,
-  VAPID_PRIVATE_KEY
+  process.env.VAPID_PUBLIC_KEY,
+  process.env.VAPID_PRIVATE_KEY
 );
 
-// ===== STORAGE EM MEMÓRIA =====
-let subscriptions = [];
+// ===== STORAGE POR USUÁRIO =====
+const subscriptionsByUser = {};
 
 // ===== SUBSCRIBE =====
 app.post("/subscribe", (req, res) => {
-  const subscription = req.body;
+  const { userId, subscription } = req.body;
 
-  if (!subscription || !subscription.endpoint) {
-    return res.status(400).json({ error: "Invalid subscription" });
+  if (!userId || !subscription?.endpoint) {
+    return res.status(400).json({ error: "Invalid payload" });
   }
 
-  const exists = subscriptions.find(
+  if (!subscriptionsByUser[userId]) {
+    subscriptionsByUser[userId] = [];
+  }
+
+  const exists = subscriptionsByUser[userId].some(
     (s) => s.endpoint === subscription.endpoint
   );
 
   if (!exists) {
-    subscriptions.push(subscription);
-    console.log("📩 Subscription registrada:", subscription.endpoint);
+    subscriptionsByUser[userId].push(subscription);
+    console.log("📩 Nova subscription:", userId);
   }
 
-  console.log("📊 Total:", subscriptions.length);
   res.status(201).json({ success: true });
 });
 
-// ===== SEND =====
+// ===== SEND PARA TODOS =====
 app.post("/send", async (req, res) => {
   const { title, body } = req.body;
-
-  if (!title || !body) {
-    return res.status(400).json({ error: "Missing title/body" });
-  }
-
   const payload = JSON.stringify({ title, body });
 
   let sent = 0;
-  const valid = [];
 
-  for (const sub of subscriptions) {
-    try {
-      await webpush.sendNotification(sub, payload);
-      sent++;
-      valid.push(sub);
-    } catch (err) {
-      if (err.statusCode !== 410 && err.statusCode !== 404) {
-        valid.push(sub);
+  for (const userId in subscriptionsByUser) {
+    const validSubs = [];
+
+    for (const sub of subscriptionsByUser[userId]) {
+      try {
+        await webpush.sendNotification(sub, payload);
+        sent++;
+        validSubs.push(sub);
+      } catch (err) {
+        if (![404, 410].includes(err.statusCode)) {
+          validSubs.push(sub);
+        }
       }
     }
+
+    subscriptionsByUser[userId] = validSubs;
   }
 
-  subscriptions = valid;
   res.json({ success: true, sent });
 });
 
 // ===== DEBUG =====
 app.get("/debug/subscriptions", (_, res) => {
   res.json({
-    total: subscriptions.length,
-    subscriptions,
+    totalUsers: Object.keys(subscriptionsByUser).length,
+    subscriptionsByUser,
   });
 });
 
-// ===== ROOT =====
-app.get("/", (_, res) => {
-  res.send("🚀 Web Push Backend rodando");
-});
-
 app.listen(PORT, () => {
-  console.log(`🚀 Backend rodando na porta ${PORT}`);
+  console.log("🚀 Web Push Backend rodando");
 });
-
