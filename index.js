@@ -1,83 +1,105 @@
+// ==============================
+// IMPORTS
+// ==============================
 const express = require("express");
-const cors = require("cors");
 const webpush = require("web-push");
+const cors = require("cors");
 
+// ==============================
+// APP SETUP
+// ==============================
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
+// ==============================
+// PORT (Render usa PORT)
+// ==============================
+const PORT = process.env.PORT || 10000;
 
-// ===== VAPID =====
+// ==============================
+// VAPID CONFIG
+// ==============================
 webpush.setVapidDetails(
   "mailto:admin@bookpairsync.app",
   process.env.VAPID_PUBLIC_KEY,
   process.env.VAPID_PRIVATE_KEY
 );
 
-// ===== STORAGE POR USUÁRIO =====
-const subscriptionsByUser = {};
+// ==============================
+// STORAGE EM MEMÓRIA (TESTE)
+// Cada endpoint = 1 dispositivo
+// ==============================
+const subscriptionsByEndpoint = {};
 
-// ===== SUBSCRIBE =====
+// ==============================
+// SUBSCRIBE
+// ==============================
 app.post("/subscribe", (req, res) => {
-  const { userId, subscription } = req.body;
+  const subscription = req.body;
 
-  if (!userId || !subscription?.endpoint) {
-    return res.status(400).json({ error: "Invalid payload" });
+  if (!subscription || !subscription.endpoint) {
+    return res.status(400).json({ error: "Invalid subscription" });
   }
 
-  if (!subscriptionsByUser[userId]) {
-    subscriptionsByUser[userId] = [];
-  }
+  const endpoint = subscription.endpoint;
 
-  const exists = subscriptionsByUser[userId].some(
-    (s) => s.endpoint === subscription.endpoint
-  );
-
-  if (!exists) {
-    subscriptionsByUser[userId].push(subscription);
-    console.log("📩 Nova subscription:", userId);
+  if (!subscriptionsByEndpoint[endpoint]) {
+    subscriptionsByEndpoint[endpoint] = subscription;
+    console.log("📥 Nova subscription salva:", endpoint);
   }
 
   res.status(201).json({ success: true });
 });
 
-// ===== SEND PARA TODOS =====
+// ==============================
+// SEND
+// ==============================
 app.post("/send", async (req, res) => {
   const { title, body } = req.body;
-  const payload = JSON.stringify({ title, body });
-
   let sent = 0;
 
-  for (const userId in subscriptionsByUser) {
-    const validSubs = [];
-
-    for (const sub of subscriptionsByUser[userId]) {
-      try {
-        await webpush.sendNotification(sub, payload);
-        sent++;
-        validSubs.push(sub);
-      } catch (err) {
-        if (![404, 410].includes(err.statusCode)) {
-          validSubs.push(sub);
-        }
+  for (const endpoint in subscriptionsByEndpoint) {
+    try {
+      await webpush.sendNotification(
+        subscriptionsByEndpoint[endpoint],
+        JSON.stringify({
+          title: title || "Nova notificação",
+          body: body || "",
+        })
+      );
+      sent++;
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) {
+        delete subscriptionsByEndpoint[endpoint];
       }
     }
-
-    subscriptionsByUser[userId] = validSubs;
   }
 
   res.json({ success: true, sent });
 });
 
-// ===== DEBUG =====
-app.get("/debug/subscriptions", (_, res) => {
+// ==============================
+// DEBUG
+// ==============================
+app.get("/debug/subscriptions", (req, res) => {
   res.json({
-    totalUsers: Object.keys(subscriptionsByUser).length,
-    subscriptionsByUser,
+    total: Object.keys(subscriptionsByEndpoint).length,
+    endpoints: Object.keys(subscriptionsByEndpoint),
   });
 });
 
-app.listen(PORT, () => {
-  console.log("🚀 Web Push Backend rodando");
+// ==============================
+// HEALTH
+// ==============================
+app.get("/", (req, res) => {
+  res.send("🚀 Web Push Backend is running");
 });
+
+// ==============================
+// START
+// ==============================
+app.listen(PORT, () => {
+  console.log("🚀 Backend rodando na porta", PORT);
+});
+
