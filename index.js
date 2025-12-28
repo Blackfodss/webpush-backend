@@ -7,77 +7,88 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ===============================
-// ENV
-// ===============================
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+/* =======================
+   ENV
+======================= */
+const {
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+  VAPID_PUBLIC_KEY,
+  VAPID_PRIVATE_KEY,
+} = process.env;
 
-const VAPID_PUBLIC_KEY =
-  "BGSu23ewxj1vajATGxdttc1dZyBUSAg8dkss5cfgRMHFYqaLs9W0XX518j013kL6m6iXGsK96v8qawql-BIYw8M";
-const VAPID_PRIVATE_KEY =
-  "7pYc_niUZQjJrT-rfhcQSbCyFKLW_021Sny0n8cnRaY";
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error("Supabase env vars missing");
+}
 
-// ===============================
-// CLIENTS
-// ===============================
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+  throw new Error("VAPID keys missing");
+}
 
+/* =======================
+   SUPABASE
+======================= */
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY
+);
+
+/* =======================
+   VAPID
+======================= */
 webpush.setVapidDetails(
-  "mailto:admin@book-pair-sync.app",
+  "mailto:admin@bookpair.app",
   VAPID_PUBLIC_KEY,
   VAPID_PRIVATE_KEY
 );
 
-// ===============================
-// ROUTES
-// ===============================
-app.get("/", (req, res) => {
+/* =======================
+   ROUTES
+======================= */
+
+app.get("/", (_, res) => {
   res.send("WebPush Backend OK");
 });
 
-// ---- SUBSCRIBE (CORRIGIDO) ----
+/* SUBSCRIBE */
 app.post("/subscribe", async (req, res) => {
   try {
     const { userId, subscription } = req.body;
 
-    if (!userId || !subscription || !subscription.endpoint || !subscription.keys) {
+    if (!userId || !subscription?.endpoint || !subscription?.keys) {
       return res.status(400).json({ error: "Dados incompletos" });
     }
 
-    const { endpoint, keys } = subscription;
-
     const { error } = await supabase
       .from("push_subscriptions")
-      .upsert(
-        {
-          user_id: userId,
-          endpoint,
-          keys,
-        },
-        { onConflict: "endpoint" }
-      );
+      .upsert({
+        user_id: userId,
+        endpoint: subscription.endpoint,
+        keys: subscription.keys,
+      }, {
+        onConflict: "endpoint"
+      });
 
     if (error) {
-      console.error("SUPABASE ERROR:", error);
+      console.error("Supabase error:", error);
       return res.status(500).json({ error: "Erro ao salvar subscription" });
     }
 
-    res.json({ success: true });
+    res.json({ ok: true });
   } catch (err) {
-    console.error("SUBSCRIBE ERROR:", err);
-    res.status(500).json({ error: "Erro interno" });
+    console.error("Subscribe error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// ---- DEBUG ----
-app.get("/debug/subscriptions", async (req, res) => {
+/* DEBUG */
+app.get("/debug/subscriptions", async (_, res) => {
   const { data, error } = await supabase
     .from("push_subscriptions")
     .select("user_id, endpoint");
 
   if (error) {
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error });
   }
 
   const grouped = {};
@@ -92,7 +103,9 @@ app.get("/debug/subscriptions", async (req, res) => {
   });
 });
 
-// ===============================
+/* =======================
+   START
+======================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("WebPush backend running on port", PORT);
