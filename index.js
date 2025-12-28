@@ -1,7 +1,11 @@
-import express from "express";
-import cors from "cors";
-import webpush from "web-push";
-import { createClient } from "@supabase/supabase-js";
+const express = require("express");
+const cors = require("cors");
+const webpush = require("web-push");
+const { createClient } = require("@supabase/supabase-js");
+
+const app = express();
+app.use(cors());
+app.use(express.json());
 
 const {
   SUPABASE_URL,
@@ -11,7 +15,6 @@ const {
   VAPID_EMAIL,
 } = process.env;
 
-/* 🔥 FAIL FAST — se faltar algo, o backend NÃO sobe */
 if (
   !SUPABASE_URL ||
   !SUPABASE_SERVICE_ROLE_KEY ||
@@ -19,39 +22,25 @@ if (
   !VAPID_PRIVATE_KEY ||
   !VAPID_EMAIL
 ) {
-  console.error("❌ Variáveis de ambiente ausentes", {
-    SUPABASE_URL: !!SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY: !!SUPABASE_SERVICE_ROLE_KEY,
-    VAPID_PUBLIC_KEY: !!VAPID_PUBLIC_KEY,
-    VAPID_PRIVATE_KEY: !!VAPID_PRIVATE_KEY,
-    VAPID_EMAIL: !!VAPID_EMAIL,
-  });
+  console.error("❌ Variáveis de ambiente ausentes");
   process.exit(1);
 }
 
-/* Supabase */
 const supabase = createClient(
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY
 );
 
-/* Web Push */
 webpush.setVapidDetails(
   VAPID_EMAIL,
   VAPID_PUBLIC_KEY,
   VAPID_PRIVATE_KEY
 );
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-/* Health check */
 app.get("/", (_req, res) => {
   res.send("WebPush Backend OK");
 });
 
-/* Subscribe */
 app.post("/subscribe", async (req, res) => {
   try {
     const { userId, subscription } = req.body;
@@ -62,11 +51,14 @@ app.post("/subscribe", async (req, res) => {
 
     const { error } = await supabase
       .from("push_subscriptions")
-      .upsert({
-        user_id: userId,
-        endpoint: subscription.endpoint,
-        keys: subscription.keys,
-      }, { onConflict: "endpoint" });
+      .upsert(
+        {
+          user_id: userId,
+          endpoint: subscription.endpoint,
+          keys: subscription.keys,
+        },
+        { onConflict: "endpoint" }
+      );
 
     if (error) {
       console.error("❌ Supabase error:", error);
@@ -75,20 +67,19 @@ app.post("/subscribe", async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
-    console.error("❌ Erro inesperado:", err);
-    res.status(500).json({ error: "Erro interno" });
+    console.error("❌ Crash:", err);
+    res.status(500).json({ error: "Internal error" });
   }
 });
 
-/* Debug */
 app.get("/debug/subscriptions", async (_req, res) => {
   const { data } = await supabase
     .from("push_subscriptions")
     .select("user_id, endpoint");
 
   const map = {};
-  data?.forEach(row => {
-    map[row.user_id] ||= [];
+  data?.forEach((row) => {
+    if (!map[row.user_id]) map[row.user_id] = [];
     map[row.user_id].push(row.endpoint);
   });
 
@@ -99,7 +90,7 @@ app.get("/debug/subscriptions", async (_req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("🚀 WebPush backend rodando na porta", PORT);
-});
+app.listen(PORT, () =>
+  console.log(`🚀 WebPush backend rodando na porta ${PORT}`)
+);
 
